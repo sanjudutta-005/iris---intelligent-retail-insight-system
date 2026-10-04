@@ -1,0 +1,6 @@
+{
+  "name": "IRIS — Intelligent Retail Insight System",
+  "description": "AI-powered indoor store navigator, real-time product locator, variant price comparator, and in-store offers discovery for physical retail stores.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
