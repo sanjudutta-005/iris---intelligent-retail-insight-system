@@ -169,13 +169,13 @@ export const StoreMapPage: React.FC = () => {
       </div>
 
       {/* Main Blueprint Canvas & Guidance Panel */}
-      <div className="max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 pb-12">
-        <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-start">
+      <div className="max-w-7xl mx-auto w-full px-2 sm:px-6 lg:px-8 pb-12">
+        <div className="grid grid-cols-1 xl:grid-cols-12 gap-4 sm:gap-6 items-start">
           {/* Interactive Map Blueprint (8 / 9 Cols) */}
-          <div className="xl:col-span-8 2xl:col-span-9 bg-white rounded-2xl shadow-sm border border-[#E2E8F0] p-4 relative flex flex-col overflow-hidden">
+          <div className="xl:col-span-8 2xl:col-span-9 bg-white rounded-2xl shadow-sm border border-[#E2E8F0] p-1.5 sm:p-4 relative flex flex-col overflow-hidden">
             <StoreFloorMap
               highlightedProduct={currentProduct}
-              className="aspect-[4/3] lg:aspect-[16/10] w-full"
+              className="w-full h-[62vh] min-h-[440px] max-h-[640px] md:h-[520px] lg:h-auto lg:aspect-[16/10]"
             />
           </div>
 

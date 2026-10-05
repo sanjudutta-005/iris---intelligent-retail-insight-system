@@ -35,8 +35,12 @@ export const StoreFloorMap: React.FC<StoreFloorMapProps> = ({
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
   const [isSimulatingWalk, setIsSimulatingWalk] = useState(false);
   const [simProgress, setSimProgress] = useState(0);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [showLegend, setShowLegend] = useState(false);
+  const [mobileHudExpanded, setMobileHudExpanded] = useState(false);
 
   const containerRef = useRef<HTMLDivElement>(null);
+  const touchStartRef = useRef<{ x: number; y: number; dist?: number; initialZoom?: number }>({ x: 0, y: 0 });
 
   // Target coordinates
   const targetX = target?.location?.x || 570;
@@ -100,6 +104,36 @@ export const StoreFloorMap: React.FC<StoreFloorMapProps> = ({
     setPan({ x: 0, y: 0 });
   };
 
+  // Center on destination target shelf with zoom
+  const handleFocusTarget = () => {
+    if (!containerRef.current) {
+      setZoom(1.6);
+      return;
+    }
+    const rect = containerRef.current.getBoundingClientRect();
+    const scaleFactor = Math.min(rect.width / 1000, rect.height / 660);
+    const targetZoom = 1.6;
+    const panX = (500 - targetX) * scaleFactor * targetZoom;
+    const panY = (330 - targetY) * scaleFactor * targetZoom;
+    setZoom(targetZoom);
+    setPan({ x: Math.round(panX), y: Math.round(panY) });
+  };
+
+  // Center on user position with zoom
+  const handleFocusUser = () => {
+    if (!containerRef.current) {
+      setZoom(1.6);
+      return;
+    }
+    const rect = containerRef.current.getBoundingClientRect();
+    const scaleFactor = Math.min(rect.width / 1000, rect.height / 660);
+    const targetZoom = 1.6;
+    const panX = (500 - startX) * scaleFactor * targetZoom;
+    const panY = (330 - startY) * scaleFactor * targetZoom;
+    setZoom(targetZoom);
+    setPan({ x: Math.round(panX), y: Math.round(panY) });
+  };
+
   const handleMouseDown = (e: React.MouseEvent) => {
     if (!interactive) return;
     setIsDragging(true);
@@ -115,105 +149,251 @@ export const StoreFloorMap: React.FC<StoreFloorMapProps> = ({
     setIsDragging(false);
   };
 
+  // Touch handlers for mobile (pan and pinch-to-zoom)
+  const handleTouchStart = (e: React.TouchEvent) => {
+    if (!interactive) return;
+    if (e.touches.length === 1) {
+      touchStartRef.current = {
+        x: e.touches[0].clientX - pan.x,
+        y: e.touches[0].clientY - pan.y
+      };
+      setIsDragging(true);
+    } else if (e.touches.length === 2) {
+      const dist = Math.hypot(
+        e.touches[0].clientX - e.touches[1].clientX,
+        e.touches[0].clientY - e.touches[1].clientY
+      );
+      touchStartRef.current = {
+        x: pan.x,
+        y: pan.y,
+        dist,
+        initialZoom: zoom
+      };
+      setIsDragging(false);
+    }
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    if (!interactive) return;
+    if (e.touches.length === 1 && isDragging) {
+      setPan({
+        x: e.touches[0].clientX - touchStartRef.current.x,
+        y: e.touches[0].clientY - touchStartRef.current.y
+      });
+    } else if (e.touches.length === 2 && touchStartRef.current.dist && touchStartRef.current.initialZoom) {
+      const newDist = Math.hypot(
+        e.touches[0].clientX - e.touches[1].clientX,
+        e.touches[0].clientY - e.touches[1].clientY
+      );
+      const ratio = newDist / touchStartRef.current.dist;
+      const nextZoom = Math.min(Math.max(touchStartRef.current.initialZoom * ratio, 0.75), 3.0);
+      setZoom(nextZoom);
+    }
+  };
+
+  const handleTouchEnd = () => {
+    setIsDragging(false);
+    touchStartRef.current = { x: 0, y: 0 };
+  };
+
   const isFlashing = flashingEslTag === target?.location?.eslTagId;
 
   return (
     <div
       ref={containerRef}
-      className={`relative w-full overflow-hidden select-none bg-[#F8FAFC] border border-[#E2E8F0] rounded-2xl ${className}`}
+      className={`${
+        isFullscreen
+          ? 'fixed inset-0 z-50 bg-[#F8FAFC] flex flex-col p-2 sm:p-4 select-none touch-none'
+          : `relative w-full overflow-hidden select-none bg-[#F8FAFC] border border-[#E2E8F0] rounded-2xl touch-none ${className}`
+      }`}
       onMouseDown={handleMouseDown}
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}
       onMouseLeave={handleMouseUp}
+      onTouchStart={handleTouchStart}
+      onTouchMove={handleTouchMove}
+      onTouchEnd={handleTouchEnd}
+      onTouchCancel={handleTouchEnd}
     >
       {/* Floating HUD Controls */}
       {showHudControls && (
         <>
-          {/* Top Left Navigation Pill */}
-          <div className="absolute top-4 left-4 z-20 pointer-events-auto bg-white/95 backdrop-blur-md rounded-xl p-3 shadow-md border border-slate-200 flex items-center gap-3 max-w-sm">
-            <div className="w-10 h-10 rounded-lg bg-[#2563EB] text-white flex items-center justify-center shrink-0 shadow-sm">
-              <span className="material-symbols-outlined text-[24px]">turn_right</span>
-            </div>
-            <div className="min-w-0">
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-[#2563EB] font-bold uppercase tracking-wider">
-                  NEXT TURN • {Math.round(target.location.distanceMeters * (1 - simProgress))}M
-                </span>
-                <span className="px-1.5 py-0.2 bg-blue-100 text-[#2563EB] text-[10px] font-bold rounded">
-                  Fastest Path
-                </span>
+          {/* Top Left Navigation Pill - Responsive & Mobile Safe */}
+          <div className="absolute top-2.5 sm:top-4 left-2.5 sm:left-4 z-20 pointer-events-auto max-w-[calc(100%-120px)] sm:max-w-sm">
+            <div
+              onClick={() => setMobileHudExpanded(!mobileHudExpanded)}
+              className="bg-white/95 backdrop-blur-md rounded-xl p-2 sm:p-3 shadow-md border border-slate-200 flex items-center gap-2 sm:gap-3 cursor-pointer transition-all hover:bg-white"
+            >
+              <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-lg bg-[#2563EB] text-white flex items-center justify-center shrink-0 shadow-sm">
+                <span className="material-symbols-outlined text-[18px] sm:text-[24px]">turn_right</span>
               </div>
-              <p className="text-sm font-semibold text-[#0F172A] truncate">
-                Turn right into {target.location.aisle} ({target.category})
-              </p>
+              <div className="min-w-0">
+                <div className="flex items-center gap-1.5 sm:gap-2">
+                  <span className="text-[10px] sm:text-xs text-[#2563EB] font-bold uppercase tracking-wider truncate">
+                    NEXT TURN • {Math.round(target.location.distanceMeters * (1 - simProgress))}M
+                  </span>
+                  <span className="hidden xs:inline-block px-1.5 py-0.2 bg-blue-100 text-[#2563EB] text-[9px] sm:text-[10px] font-bold rounded">
+                    Fastest
+                  </span>
+                </div>
+                <p className="text-xs sm:text-sm font-semibold text-[#0F172A] truncate">
+                  Turn right into {target.location.aisle}
+                </p>
+                {mobileHudExpanded && (
+                  <p className="text-[10px] text-slate-500 mt-1 line-clamp-2">
+                    {target.name} • {target.location.shelf} ({target.location.tier})
+                  </p>
+                )}
+              </div>
             </div>
           </div>
 
-          {/* Top Right Zoom and Control Tools */}
-          <div className="absolute top-4 right-4 z-20 pointer-events-auto flex flex-col gap-1.5 bg-white/95 backdrop-blur-md rounded-xl p-1 shadow-md border border-slate-200">
+          {/* Top Right Zoom, Focus and Control Tools */}
+          <div className="absolute top-2.5 sm:top-4 right-2.5 sm:right-4 z-20 pointer-events-auto flex flex-col gap-1 sm:gap-1.5 bg-white/95 backdrop-blur-md rounded-xl p-1 shadow-md border border-slate-200">
+            {/* Fullscreen Toggle */}
+            <button
+              type="button"
+              onClick={() => setIsFullscreen(!isFullscreen)}
+              className={`w-8 h-8 sm:w-9 sm:h-9 rounded-lg flex items-center justify-center transition-colors ${
+                isFullscreen ? 'bg-[#2563EB] text-white' : 'hover:bg-slate-100 text-[#2563EB]'
+              }`}
+              title={isFullscreen ? 'Exit Fullscreen' : 'Fullscreen Map'}
+            >
+              <span className="material-symbols-outlined text-[18px] sm:text-[20px]">
+                {isFullscreen ? 'fullscreen_exit' : 'fullscreen'}
+              </span>
+            </button>
+
+            {/* Focus Destination Shelf */}
+            <button
+              type="button"
+              onClick={handleFocusTarget}
+              className="w-8 h-8 sm:w-9 sm:h-9 rounded-lg hover:bg-slate-100 flex items-center justify-center text-red-600 transition-colors"
+              title="Focus Target Shelf"
+            >
+              <span className="material-symbols-outlined text-[18px] sm:text-[20px]">pin_drop</span>
+            </button>
+
+            {/* Focus Your Position */}
+            <button
+              type="button"
+              onClick={handleFocusUser}
+              className="w-8 h-8 sm:w-9 sm:h-9 rounded-lg hover:bg-slate-100 flex items-center justify-center text-[#2563EB] transition-colors"
+              title="Focus Your Position"
+            >
+              <span className="material-symbols-outlined text-[18px] sm:text-[20px]">person_pin_circle</span>
+            </button>
+
+            {/* Recenter / Fit Whole Store */}
             <button
               type="button"
               onClick={handleRecenter}
-              className="w-9 h-9 rounded-lg hover:bg-slate-100 flex items-center justify-center text-[#2563EB] transition-colors"
-              title="Recenter Map"
+              className="w-8 h-8 sm:w-9 sm:h-9 rounded-lg hover:bg-slate-100 flex items-center justify-center text-slate-700 transition-colors"
+              title="Fit Full Store Map"
             >
-              <span className="material-symbols-outlined text-[20px]">my_location</span>
+              <span className="material-symbols-outlined text-[18px] sm:text-[20px]">fit_screen</span>
             </button>
+
+            {/* Zoom In */}
             <button
               type="button"
-              onClick={() => setZoom((z) => Math.min(z + 0.25, 2.5))}
-              className="w-9 h-9 rounded-lg hover:bg-slate-100 flex items-center justify-center text-slate-700 transition-colors"
+              onClick={() => setZoom((z) => Math.min(z + 0.3, 3.0))}
+              className="w-8 h-8 sm:w-9 sm:h-9 rounded-lg hover:bg-slate-100 flex items-center justify-center text-slate-700 transition-colors"
               title="Zoom In"
             >
-              <span className="material-symbols-outlined text-[20px]">add</span>
+              <span className="material-symbols-outlined text-[18px] sm:text-[20px]">add</span>
             </button>
+
+            {/* Zoom Out */}
             <button
               type="button"
-              onClick={() => setZoom((z) => Math.max(z - 0.25, 0.75))}
-              className="w-9 h-9 rounded-lg hover:bg-slate-100 flex items-center justify-center text-slate-700 transition-colors"
+              onClick={() => setZoom((z) => Math.max(z - 0.3, 0.75))}
+              className="w-8 h-8 sm:w-9 sm:h-9 rounded-lg hover:bg-slate-100 flex items-center justify-center text-slate-700 transition-colors"
               title="Zoom Out"
             >
-              <span className="material-symbols-outlined text-[20px]">remove</span>
+              <span className="material-symbols-outlined text-[18px] sm:text-[20px]">remove</span>
             </button>
+
+            {/* Simulate Walking */}
             <button
               type="button"
               onClick={() => {
                 setIsSimulatingWalk(!isSimulatingWalk);
               }}
-              className={`w-9 h-9 rounded-lg flex items-center justify-center transition-colors ${
+              className={`w-8 h-8 sm:w-9 sm:h-9 rounded-lg flex items-center justify-center transition-colors ${
                 isSimulatingWalk ? 'bg-emerald-500 text-white animate-pulse' : 'hover:bg-slate-100 text-slate-700'
               }`}
               title="Simulate Walking Route"
             >
-              <span className="material-symbols-outlined text-[20px]">directions_walk</span>
+              <span className="material-symbols-outlined text-[18px] sm:text-[20px]">directions_walk</span>
             </button>
           </div>
 
-          {/* Bottom Left Legend */}
-          <div className="absolute bottom-3 left-3 z-20 bg-white/90 backdrop-blur-md px-3 py-1.5 rounded-xl shadow-sm border border-slate-200 flex items-center gap-4 text-xs font-medium text-slate-600">
-            <div className="flex items-center gap-1.5">
-              <span className="w-2.5 h-2.5 rounded-full bg-[#2563EB]" />
-              <span>Target Route</span>
+          {/* Bottom Left Legend - Collapsible on Mobile */}
+          <div className="absolute bottom-2.5 sm:bottom-3 left-2.5 sm:left-3 z-20 pointer-events-auto">
+            {/* Mobile Legend Button & Popup */}
+            <div className="sm:hidden">
+              <button
+                type="button"
+                onClick={() => setShowLegend(!showLegend)}
+                className="bg-white/95 backdrop-blur-md px-2.5 py-1.5 rounded-xl shadow-sm border border-slate-200 flex items-center gap-1.5 text-[11px] font-bold text-slate-700 hover:bg-white"
+              >
+                <span className="material-symbols-outlined text-[15px] text-[#2563EB]">info</span>
+                <span>{showLegend ? 'Close' : 'Legend'}</span>
+              </button>
+              {showLegend && (
+                <div className="mt-1.5 bg-white/95 backdrop-blur-md p-2 rounded-xl shadow-md border border-slate-200 flex flex-col gap-1.5 text-[10px] font-medium text-slate-700 animate-in fade-in slide-in-from-bottom-2">
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-[#2563EB]" />
+                    <span>Target Route</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-sm bg-emerald-400" />
+                    <span>Fresh Produce</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-sm bg-sky-300" />
+                    <span>Dairy & Frozen</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-sm bg-indigo-200" />
+                    <span>Checkouts</span>
+                  </div>
+                </div>
+              )}
             </div>
-            <div className="flex items-center gap-1.5">
-              <span className="w-2.5 h-2.5 rounded-sm bg-emerald-300" />
-              <span>Fresh Produce</span>
+
+            {/* Desktop / Tablet Full Legend */}
+            <div className="hidden sm:flex bg-white/90 backdrop-blur-md px-3 py-1.5 rounded-xl shadow-sm border border-slate-200 items-center gap-3.5 text-xs font-medium text-slate-600">
+              <div className="flex items-center gap-1.5">
+                <span className="w-2.5 h-2.5 rounded-full bg-[#2563EB]" />
+                <span>Target Route</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="w-2.5 h-2.5 rounded-sm bg-emerald-400" />
+                <span>Fresh Produce</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="w-2.5 h-2.5 rounded-sm bg-sky-300" />
+                <span>Dairy & Frozen</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="w-2.5 h-2.5 rounded-sm bg-indigo-200" />
+                <span>Checkouts</span>
+              </div>
             </div>
-            <div className="flex items-center gap-1.5">
-              <span className="w-2.5 h-2.5 rounded-sm bg-sky-200" />
-              <span>Dairy & Frozen</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <span className="w-2.5 h-2.5 rounded-sm bg-indigo-100" />
-              <span>Checkouts</span>
-            </div>
+          </div>
+
+          {/* Mobile Bottom Right Hint */}
+          <div className="sm:hidden absolute bottom-2.5 right-2.5 z-10 pointer-events-none bg-slate-900/75 backdrop-blur-xs text-white text-[9px] px-2 py-1 rounded-full font-medium">
+            Drag • Pinch zoom
           </div>
         </>
       )}
 
       {/* SVG Canvas */}
       <div
-        className="w-full h-full cursor-grab active:cursor-grabbing transition-transform duration-75"
+        className="w-full h-full cursor-grab active:cursor-grabbing transition-transform duration-75 flex items-center justify-center"
         style={{
           transform: `scale(${zoom}) translate(${pan.x / zoom}px, ${pan.y / zoom}px)`,
           transformOrigin: 'center center'
@@ -222,7 +402,7 @@ export const StoreFloorMap: React.FC<StoreFloorMapProps> = ({
         <svg
           viewBox="0 0 1000 660"
           className="w-full h-full object-contain"
-          style={{ minHeight: '440px' }}
+          preserveAspectRatio="xMidYMid meet"
         >
           <defs>
             <pattern id="grid-bg" width="20" height="20" patternUnits="userSpaceOnUse">
